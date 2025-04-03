@@ -1,47 +1,61 @@
-import validators
 import streamlit as st
+import validators
+import os
+import pickle
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
-from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
+from langchain_community.document_loaders import UnstructuredURLLoader
 from dotenv import load_dotenv
-import os
-import pickle
 
-# ✅ Load API Key from .env
+# ✅ Load API Key
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # ✅ Streamlit UI
-st.set_page_config(page_title="LangChain: Summarize Text From YT or Website", page_icon="🦜")
-st.title("🦜 LangChain: Summarize Text From YT or Website")
-st.subheader("Summarize any YouTube Video or Website")
+st.set_page_config(page_title="LangChain: Summarize YT or Website", page_icon="🦜")
+st.title("🦜 Summarize YouTube Video or Website")
+st.subheader("Enter a YouTube or Website URL:")
 
-# ✅ File path for pickled model config (not full LLM)
+generic_url = st.text_input("Enter URL here:")
+
+# ✅ Pickled Model Configuration (Storing Only Model Name, Not Full Object)
 MODEL_CONFIG_FILE = "llm_config.pkl"
 
-# ✅ Load or Initialize LLM (Only store config, not full object)
 if os.path.exists(MODEL_CONFIG_FILE):
-    try:
-        with open(MODEL_CONFIG_FILE, "rb") as file:
+    with open(MODEL_CONFIG_FILE, "rb") as file:
+        try:
             model_config = pickle.load(file)
-    except (EOFError, pickle.UnpicklingError):
-        model_config = {"model": "llama3-8b-8192"}
+        except (EOFError, pickle.UnpicklingError):
+            model_config = {"model": "llama3-8b-8192"}
 else:
     model_config = {"model": "llama3-8b-8192"}
     with open(MODEL_CONFIG_FILE, "wb") as file:
         pickle.dump(model_config, file)
 
-# ✅ Reinitialize LLM (since full object can't be pickled)
+# ✅ Load LLM Model
 if "llm" not in st.session_state:
     st.session_state.llm = ChatGroq(model=model_config["model"], groq_api_key=GROQ_API_KEY)
 
-# ✅ User Input
-generic_url = st.text_input("Enter a YouTube or Website URL:")
+# ✅ Function to Get YouTube Transcript
+def get_youtube_transcript(video_url):
+    """Extracts transcript from a YouTube video."""
+    try:
+        video_id = video_url.split("v=")[1].split("&")[0]
+        transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'hi'])
+
+        transcript_text = " ".join([entry["text"] for entry in transcript_data])
+        return transcript_text
+
+    except TranscriptsDisabled:
+        return "⚠️ Transcripts are disabled for this video."
+    except Exception as e:
+        return f"⚠️ Error fetching transcript: {str(e)}"
 
 # ✅ Prompt Template
 prompt_template = """
-Provide a summary of the following content in 300 words:
+Provide a concise summary of the following content in 300 words:
 Content: {text}
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["text"])
@@ -57,26 +71,16 @@ if st.button("Summarize the Content"):
             with st.spinner("⏳ Fetching and summarizing content..."):
                 docs = None  # Default
 
-                # ✅ Load content from YouTube or Website
+                # ✅ Process YouTube Video
                 if "youtube.com" in generic_url or "youtu.be" in generic_url:
-                    try:
-                        yt_loader = YoutubeLoader.from_youtube_url(
-                            generic_url, 
-                            add_video_info=False,
-                            language=["hi"]  # ✅ Change if another language is needed
-                        )
-                        transcript = yt_loader.load()
-
-                        if transcript:
-                            docs = transcript
-                        else:
-                            st.error("⚠️ No transcript available for this YouTube video.")
-                            docs = None  # Avoid invalid API calls
-
-                    except Exception as yt_error:
-                        st.error(f"⚠️ Failed to fetch transcript: {yt_error}")
+                    transcript = get_youtube_transcript(generic_url)
+                    if "⚠️" in transcript:
+                        st.error(transcript)
                         docs = None
+                    else:
+                        docs = [transcript]
 
+                # ✅ Process Website
                 else:
                     web_loader = UnstructuredURLLoader(
                         urls=[generic_url],
