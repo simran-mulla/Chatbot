@@ -3,95 +3,98 @@ import streamlit as st
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
-from langchain_community.document_loaders import UnstructuredURLLoader
-from langchain.schema import Document
-from youtube_transcript_api import YouTubeTranscriptApi
-import pickle 
+from langchain_community.document_loaders import YoutubeLoader, UnstructuredURLLoader
+from dotenv import load_dotenv
+import os
+import pickle
 
-## Streamlit APP
+# ✅ Load API Key from .env
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "your_predefined_groq_api_key_here")
+
+# ✅ Streamlit UI
 st.set_page_config(page_title="LangChain: Summarize Text From YT or Website", page_icon="🦜")
 st.title("🦜 LangChain: Summarize Text From YT or Website")
-st.subheader('Summarize URL')
+st.subheader("Summarize any YouTube Video or Website")
 
-## Get the Groq API Key and URL (YouTube or Website) to be summarized
-with st.sidebar:
-    groq_api_key = st.text_input("Groq API Key", value="", type="password")
+# ✅ File path for pickled model
+MODEL_FILE = "llm_model.pkl"
 
-generic_url = st.text_input("Enter YouTube or Website URL", label_visibility="collapsed")
-
-## Initialize the Groq Model (Gemma2-9b)
-if groq_api_key.strip():
-    llm = ChatGroq(model="gemma2-9b-it", groq_api_key=groq_api_key)
+# ✅ Load or Initialize LLM
+if os.path.exists(MODEL_FILE):
+    with open(MODEL_FILE, "rb") as file:
+        st.session_state.llm = pickle.load(file)
 else:
-    llm = None
+    st.session_state.llm = ChatGroq(model="llama3-8b-8192", groq_api_key=GROQ_API_KEY)
+    with open(MODEL_FILE, "wb") as file:
+        pickle.dump(st.session_state.llm, file)
 
-## Prompt Template
+# ✅ User Input
+generic_url = st.text_input("Enter a YouTube or Website URL:")
+
+# ✅ Prompt Template
 prompt_template = """
 Provide a summary of the following content in 300 words:
 Content: {text}
 """
 prompt = PromptTemplate(template=prompt_template, input_variables=["text"])
 
-## Function to Extract YouTube Transcript
-def get_youtube_transcript(video_url):
-    try:
-        # Extract YouTube Video ID
-        video_id = video_url.split("v=")[-1] if "v=" in video_url else video_url.split("/")[-1]
-        
-        # Fetch transcript
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        transcript_text = "\n".join([t["text"] for t in transcript])
-        return transcript_text
-    except Exception as e:
-        return f"Error fetching transcript: {str(e)}"
-
-## Process When Button Clicked
-if st.button("Summarize the Content from YT or Website"):
-    if not groq_api_key.strip() or not generic_url.strip():
-        st.error("Please provide the API key and a valid URL.")
+# ✅ Summarization Logic
+if st.button("Summarize the Content"):
+    if not generic_url.strip():
+        st.error("🚨 Please enter a valid URL to proceed.")
     elif not validators.url(generic_url):
-        st.error("Please enter a valid URL (YouTube video or website).")
+        st.error("❌ Invalid URL! Please enter a correct YouTube or website URL.")
+
     else:
         try:
-            with st.spinner("Processing..."):
-                ## Load YouTube or Website Content
+            with st.spinner("⏳ Fetching and summarizing content..."):
+                docs = None  # Default
+
+                # ✅ Load content from YouTube or Website
                 if "youtube.com" in generic_url or "youtu.be" in generic_url:
-                    transcript_text = get_youtube_transcript(generic_url)
-                    if "Error" in transcript_text:
-                        st.error(f"Failed to fetch YouTube transcript: {transcript_text}")
-                        docs = []
-                    else:
-                        docs = [Document(page_content=transcript_text)]
+                    try:
+                        yt_loader = YoutubeLoader.from_youtube_url(
+                            generic_url, 
+                            add_video_info=False,
+                            language=["hi"]  # ✅ Change if another language is needed
+                        )
+                        transcript = yt_loader.load()
+
+                        if transcript:
+                            docs = transcript
+                        else:
+                            st.error("⚠️ No transcript available for this YouTube video.")
+                            docs = None  # Avoid invalid API calls
+
+                    except Exception as yt_error:
+                        st.error(f"⚠️ Failed to fetch transcript: {yt_error}")
+                        docs = None
+
                 else:
-                    loader = UnstructuredURLLoader(
-                        urls=[generic_url], 
-                        ssl_verify=False,
-                        headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5_1) "
-                                              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"}
+                    web_loader = UnstructuredURLLoader(
+                        urls=[generic_url],
+                        ssl_verify=True,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        }
                     )
-                    docs = loader.load()
+                    docs = web_loader.load()
 
-                ## Ensure content is available before summarization
+                # ✅ Handle Empty Content
                 if not docs:
-                    st.error("No content found to summarize.")
+                    st.error("⚠️ Failed to retrieve content. The page might be blocking requests.")
                 else:
-                    text_content = "\n\n".join([doc.page_content for doc in docs])
+                    # ✅ Summarization Chain
+                    chain = load_summarize_chain(st.session_state.llm, chain_type="stuff", prompt=prompt)
+                    response = chain.invoke(docs)
 
-                    ## Summarization Chain
-                    chain = load_summarize_chain(llm, chain_type="stuff", prompt=prompt)
-                    output_summary = chain.invoke({"input_documents": [Document(page_content=text_content)]})
+                    summary = response.get("output_text", str(response))
 
-                    ## Extract summary text
-                    summary_text = output_summary.get("output_text", "No summary generated.")
-
-                    st.success(summary_text)
+                    # ✅ Display Summary
+                    st.success("✅ Summary Generated Successfully!")
+                    st.write(summary)
 
         except Exception as e:
-            st.error(f"Exception: {str(e)}") 
-
-with open("app.pkl", "wb") as file:
-    pickle.dump(llm, file)
-print("Model saved as app.pkl")
-
-with open("app.pkl", "rb") as file:
-    loaded_model = pickle.load(file)
+            st.error(f"⚠️ An error occurred: {str(e)}")
