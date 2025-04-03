@@ -17,17 +17,24 @@ st.set_page_config(page_title="LangChain: Summarize Text From YT or Website", pa
 st.title("🦜 LangChain: Summarize Text From YT or Website")
 st.subheader("Summarize any YouTube Video or Website")
 
-# ✅ File path for pickled model
-MODEL_FILE = "llm_model.pkl"
+# ✅ File path for pickled model config (not full LLM)
+MODEL_CONFIG_FILE = "llm_config.pkl"
 
-# ✅ Load or Initialize LLM
-if os.path.exists(MODEL_FILE):
-    with open(MODEL_FILE, "rb") as file:
-        st.session_state.llm = pickle.load(file)
+# ✅ Load or Initialize LLM (Only store config, not full object)
+if os.path.exists(MODEL_CONFIG_FILE):
+    try:
+        with open(MODEL_CONFIG_FILE, "rb") as file:
+            model_config = pickle.load(file)
+    except (EOFError, pickle.UnpicklingError):
+        model_config = {"model": "llama3-8b-8192"}
 else:
-    st.session_state.llm = ChatGroq(model="llama3-8b-8192", groq_api_key=GROQ_API_KEY)
-    with open(MODEL_FILE, "wb") as file:
-        pickle.dump(st.session_state.llm, file)
+    model_config = {"model": "llama3-8b-8192"}
+    with open(MODEL_CONFIG_FILE, "wb") as file:
+        pickle.dump(model_config, file)
+
+# ✅ Reinitialize LLM (since full object can't be pickled)
+if "llm" not in st.session_state:
+    st.session_state.llm = ChatGroq(model=model_config["model"], groq_api_key=GROQ_API_KEY)
 
 # ✅ User Input
 generic_url = st.text_input("Enter a YouTube or Website URL:")
@@ -45,7 +52,6 @@ if st.button("Summarize the Content"):
         st.error("🚨 Please enter a valid URL to proceed.")
     elif not validators.url(generic_url):
         st.error("❌ Invalid URL! Please enter a correct YouTube or website URL.")
-
     else:
         try:
             with st.spinner("⏳ Fetching and summarizing content..."):
