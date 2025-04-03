@@ -7,6 +7,7 @@ from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 from langchain.chains.summarize import load_summarize_chain
 from langchain_community.document_loaders import UnstructuredURLLoader
+from langchain.schema import Document  # ✅ Fix: Wrap content in Document object
 from dotenv import load_dotenv
 
 # ✅ Load API Key
@@ -69,16 +70,15 @@ if st.button("Summarize the Content"):
     else:
         try:
             with st.spinner("⏳ Fetching and summarizing content..."):
-                docs = None  # Default
+                docs = []  # Default empty list
 
                 # ✅ Process YouTube Video
                 if "youtube.com" in generic_url or "youtu.be" in generic_url:
                     transcript = get_youtube_transcript(generic_url)
                     if "⚠️" in transcript:
                         st.error(transcript)
-                        docs = None
                     else:
-                        docs = [transcript]
+                        docs.append(Document(page_content=transcript))  # ✅ Fix: Wrap transcript in Document object
 
                 # ✅ Process Website
                 else:
@@ -90,7 +90,10 @@ if st.button("Summarize the Content"):
                                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         }
                     )
-                    docs = web_loader.load()
+                    webpage_content = web_loader.load()
+
+                    if webpage_content:
+                        docs.append(Document(page_content=webpage_content[0].page_content))  # ✅ Fix: Ensure correct format
 
                 # ✅ Handle Empty Content
                 if not docs:
