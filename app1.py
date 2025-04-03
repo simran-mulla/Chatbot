@@ -10,7 +10,7 @@ import pickle
 
 # ✅ Load API Key from .env
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "your_predefined_groq_api_key_here")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # ✅ Streamlit UI
 st.set_page_config(page_title="LangChain: Summarize Text From YT or Website", page_icon="🦜")
